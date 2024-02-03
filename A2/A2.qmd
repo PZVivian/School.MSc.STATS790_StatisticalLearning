@@ -1,0 +1,192 @@
+---
+format: pdf
+editor: visual
+execute:
+  echo: false
+  warning: false
+  error: false
+header-includes:
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+bibliography: A2.bib
+csl: https://www.zotero.org/styles/apa-single-spaced
+nocite: |
+  | @lecture4, @lecture5
+fontsize: 11pt
+geometry: 
+  - margin = 1in
+linestretch: 1.5
+---
+
+# Mixture model-based clustering of clients for a wholesale provider
+
+**STATS/CSE 790 Assignment 2**
+
+**2024-02-01**
+
+**Pao Zhu Vivian Hsu (400547994)**
+
+```{r setup, output=FALSE}
+# ----- PACKAGE & DATA SETUP ----- #
+rm(list=ls())
+library(tidyverse)
+library("GGally")
+library(mixture)
+library(pgmm)
+library(e1071)
+library(kableExtra)
+
+# Load data
+wholesale <- read_csv("Wholesale customers data.csv")
+
+```
+
+
+```{r viz-1, output=FALSE}
+# ----- DATA VISUALIZATION & TRANSFORMATION ----- #
+# Check for missing data
+sum(sapply(wholesale, function(col){ifelse(is.na(col), 1, 0)}))
+sum(sapply(wholesale, function(col){ifelse(sum(col == ""), 1, 0)}))
+
+```
+
+```{r viz-2, output=FALSE}
+# Pairs plot
+wholesaleV <- within(wholesale, Type <- ifelse(Channel==1,"Horeca", "Retail"))
+ggpairs(data=wholesaleV[,-c(1,2)], aes(colour=Type, alpha=0.4))
+
+```
+
+```{r viz-3, output=FALSE}
+# Handle outliers
+bplot <- boxplot(wholesale, ylab ="Monetary units", xlab ="Product category")
+outlier_val <- bplot$out
+outlier_index <- bplot$group
+bplot_stats <- bplot$stats
+wholesale <- wholesale %>% 
+  mutate(Fresh = ifelse(Fresh %in% outlier_val[outlier_index==3], 
+                                           bplot_stats[1,3], Fresh),
+         Milk = ifelse(Milk %in% outlier_val[outlier_index==4], 
+                                           bplot_stats[1,5], Milk),
+         Grocery = ifelse(Grocery %in% outlier_val[outlier_index==5], 
+                                           bplot_stats[1,5], Grocery),
+         Frozen = ifelse(Frozen %in% outlier_val[outlier_index==6], 
+                                           bplot_stats[1,6], Frozen),
+         Detergents_Paper = ifelse(Detergents_Paper %in% outlier_val[outlier_index==7], 
+                                           bplot_stats[1,7], Detergents_Paper),
+         Delicassen = ifelse(Delicassen %in% outlier_val[outlier_index==8], 
+                                           bplot_stats[1,8], Delicassen))
+
+# Scale data
+x <- scale(wholesale[,-c(1,2)])
+
+```
+
+```{r gaussian-1, output=FALSE}
+# ----- GAUSSIAN PARSIMONIOUS CLUSTERING ------ #
+# Use k-means
+wholesale_gpcm <- gpcm(x, G=1:4, start=2)
+summary(wholesale_gpcm)
+
+```
+
+```{r gaussian-2, output=FALSE}
+wholesale_gpcm$best_model
+
+```
+
+```{r gaussian-3, output=FALSE}
+tab_gpcm <- table(as.vector(wholesale[,1])$Channel, wholesale_gpcm$map)
+tab_gpcm
+
+```
+
+```{r gaussian-4, output=FALSE}
+classAgreement(tab_gpcm)
+
+```
+
+```{r mixture-1, output=FALSE}
+# ----- MIXTURE OF FACTOR ANALYZERS ----- #
+# Use k-means
+wholesale_pgmm = pgmmEM(x, rG=1:4, rq=1:6, relax=TRUE)
+summary(wholesale_pgmm)
+
+```
+
+```{r mixture-2, output=FALSE}
+tab_pgmm <- table(as.vector(wholesale[,1])$Channel, wholesale_pgmm$map)
+tab_pgmm
+
+```
+
+```{r mixture-3, output=FALSE}
+classAgreement(tab_pgmm)
+
+```
+
+```{r summary, output = FALSE}
+# RESULTS
+model <- c("Gaussian Parsimonious Clustering", "Mixture of Factor Analyzers")
+diag <- c(classAgreement(tab_gpcm)$diag, 
+          classAgreement(tab_pgmm)$diag)
+kappa <- c(classAgreement(tab_gpcm)$kappa, 
+           classAgreement(tab_pgmm)$kappa)
+rand <- c(classAgreement(tab_gpcm)$rand, 
+          classAgreement(tab_pgmm)$rand)
+crand <- c(classAgreement(tab_gpcm)$crand, 
+           classAgreement(tab_pgmm)$crand)
+summary <- data.frame("Model" = model, 
+                      "Accuracy" = round(diag,3),
+                      "Kappa" = round(kappa,3), 
+                      "Rand Index" = round(rand,3),
+                      "Adjusted Rand Index" = round(crand,3),
+                      check.names = FALSE)
+kable(summary)
+```
+
+
+
+## Introduction
+
+In this paper, we perform model-based clustering methods to classify clients of a wholesale distributor using data on their annual spend for a range of product categories. Results of this study may help wholesale businesses better understand their clients to improve product offerings to clients. The data in this study comes from the UCI Machine Learning Repository [@wholesaleData]. It contains 440 rows of client data and 8 variables describing the type of client (retail or hotel/restaurant/cafe), region, and the annual spend in various product categories. All spend amounts are in monetary units.
+
+## Methods
+
+We first started the study by ensuring there were no missing data values and investigating the pattern of the data in a pairs plot. The plot revealed that there was heavy skewing in many of the product categories. This appeared to be caused by outliers as highlighted in the boxplot in @fig-bplot below. To handle this, we capped the outliers using the 1.5 IQR rule. As a note, region was excluded from the study since we decided to focus the clustering on the type of client instead.
+
+```{r fig-bplot, ref.label="viz-3", output=TRUE, message=FALSE, fig.cap="Outliers in the product categories", fig.height=5, fig.width=8}
+```
+
+Next, we built two models using mixture model-based clustering methods. The first model used the Gaussian Parsimonious Clustering Model (GPCM) method. This form of clustering applies all model types within the GPCM family to the data, performs the expectation–maximization (EM) algorithm, and picks the best model using a penalizing criterion such as Bayesian Information Criterion (BIC) [@lecture4]. Since there are two classes, we tried running the model for 1 to 4 components using k-means for initialization. The best model had a covariance model type of VVI (variable volume, variable shape, and axis-aligned orientation) with 4 components and a BIC value of `r round(as.numeric(wholesale_gpcm$best_model[3]),3)`.
+
+The second model used the Mixture of Factor Analyzers (MFA) method. This form of clustering is similar to GPCM, but applies the data to all model types within the Parsimonious Gaussian Mixture Models (PGMM) family, and uses the an extension of the EM algorithm called the Alternating Expectation-Conditional Maximization algorithm (AECM) [@lecture5]. Since there are two classes and 6 predictor variables, we tried running the model for 1 to 4 components and 1 to 6 factors. The best model used a CUU model with `r wholesale_pgmm$g` components, a q value of `r wholesale_pgmm$q`, and a BIC of `r round(as.numeric(wholesale_pgmm$summ_info[4]),3)`.
+
+## Results
+
+@tbl-summary below summarizes the results of each clustering method. The accuracy is quite low for both models with an Adjusted Rand Index of 0.201 and 0.200 for the GPCM model and MFA models respectively. While the Gaussian Parsimonious Clustering model performed slightly better compared to the Mixture of Factor Analyzers model, the poor performance of both models indicate more work can be done to improve results.
+
+```{r}
+#| label: tbl-summary
+#| ref-label: summary
+#| tbl-cap: Clustering performance comparison
+#| output: TRUE
+#| message: FALSE
+```
+
+## Conclusion
+
+Based on the results of our study, we conclude that the two mixture model-based clustering models do not classify clients for the wholesale distributor very accurately. Some ways to improve results for future studies include feature engineering, performing more extensive data cleansing prior to modelling, or incorporating subject-matter expertise to interpret results.
+
+
+## References
+
+::: {#refs}
+:::
+
+\newpage
+
+## Appendix
+
+```{r report-code, ref.label=knitr::all_labels(), echo=TRUE, eval=TRUE}
+```
