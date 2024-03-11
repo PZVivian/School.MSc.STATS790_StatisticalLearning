@@ -1,0 +1,267 @@
+---
+format: pdf
+editor: visual
+execute:
+  echo: false
+  warning: false
+  error: false
+header-includes:
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+bibliography: A3.bib
+csl: https://www.zotero.org/styles/apa-single-spaced
+nocite: |
+  | @lecture6, @lecture7, @lecture8
+fontsize: 11pt
+geometry: 
+  - margin = 1in
+linestretch: 1.5
+---
+
+# Liver disease prediction using ensemble learning methods
+
+**STATS/CSE 790 Assignment 3**
+
+**2024-02-14**
+
+**Pao Zhu Vivian Hsu (400547994)**
+
+```{r setup, output=FALSE}
+# ----- PACKAGE & DATA SETUP ----- #
+library(tidyverse)
+library(GGally)
+library(gbm)
+library(tree)
+library(randomForest)
+library(e1071)
+library(kableExtra)
+
+# Load data
+liver_raw <- read_csv("Indian Liver Patient Dataset (ILPD).csv", col_names = FALSE)
+colnames(liver_raw) <- c("age", "gender", "totalBilirubin", "directBilirubin", 
+                         "totalProteins", "albumin","agRatio", "SGPT", "SGOT", 
+                         "alkphos", "diagnosis")
+
+```
+
+```{r viz-1, output=FALSE}
+# ----- DATA TRANSFORMATION ----- #
+# Check for missing data
+sum(sapply(liver_raw, function(col){ifelse(is.na(col), 1, 0)}))
+sum(sapply(liver_raw, function(col){ifelse(sum(col == ""), 1, 0)}))
+
+# Data transformation
+liver <- liver_raw %>% 
+  mutate(diagnosis = ifelse(diagnosis == 1, 1, 0), # One hot encoding
+         gender = ifelse(gender == "Male", 0, 1), # One hot encoding
+         alkphos = ifelse(is.na(alkphos), mean(alkphos, na.rm=TRUE), alkphos) # Impute missing data
+         )
+
+# Check for missing data
+sum(sapply(liver, function(col){ifelse(is.na(col), 1, 0)}))
+sum(sapply(liver, function(col){ifelse(sum(col == ""), 1, 0)}))
+
+```
+
+```{r viz-2, output=FALSE}
+# Full pairs plot
+liverV <- within(liver, LiverDisease <- ifelse(diagnosis==1,"Yes", "No"))
+ggpairs(data=liverV[,-c(11)], aes(colour=LiverDisease, alpha=0.4))
+
+```
+
+```{r viz-3, output=FALSE}
+# Smaller pairs plot
+liverV <- within(liver, LiverDisease <- ifelse(diagnosis==1,"Yes", "No"))
+ggpairs(data=liverV[,-c(11,1,2,3,6,10)], aes(colour=LiverDisease, alpha=0.4))
+
+```
+
+```{r split-1, output=FALSE}
+# Split data into train and test
+set.seed(1)
+train.ind <- sample(1:nrow(liver), nrow(liver) / 2)
+liver.train <- liver[train.ind,]
+liver.test <- liver[-train.ind,]
+liver.test.labs <- liver[-train.ind, "diagnosis"]
+
+```
+
+```{r boost-1, output=FALSE}
+# ----- BOOSTING ------ #
+set.seed(1)
+boost.liver <- gbm(diagnosis ~ ., data = liver.train, distribution="bernoulli",
+               n.trees = 3000, interaction.depth = 1)
+boost.summary <- summary(boost.liver)
+```
+
+```{r boost-1-2, output=FALSE}
+boost.summary
+```
+
+```{r boost-2-1, output=FALSE}
+plot(boost.liver, i = "agRatio")
+```
+
+```{r boost-2-2, output=FALSE}
+plot(boost.liver, i = "totalProteins")
+```
+
+```{r boost-3, output=FALSE}
+# Function to harden probabilities
+harden <- function(probs){
+  n <- length(liver.test$diagnosis)
+  pred.labs <- rep(0,n)
+  for(i in 1:n){
+  	pred.labs[i] <- ifelse(probs[i] < 0.5, 0, 1)
+  }
+  return(pred.labs)
+}
+
+# Predictions
+yhat.boost <- predict(boost.liver, newdata = liver.test, 
+                      n.trees = 3000, distribution = "bernoulli", 
+                      type = "response")
+boost.pred.labs <- harden(yhat.boost)
+tab1 <- table(liver.test.labs$diagnosis, boost.pred.labs)
+tab1
+```
+
+```{r bagging-1, output=FALSE}
+# ----- BAGGING ------ #
+# Decision tree
+tree.liver <- tree(diagnosis ~ . - diagnosis, liver)
+summary(tree.liver)
+plot(tree.liver)
+text(tree.liver, pretty = 0)
+```
+
+```{r bagging-2, output=FALSE}
+# Bagging
+bagging.liver <- randomForest(as.factor(diagnosis) ~ ., data=liver, subset=train.ind, 
+                              mtry=10, importance=TRUE, type="class")
+importance(bagging.liver)
+```
+
+```{r bagging-3, output=FALSE}
+varImpPlot(bagging.liver, main="")
+```
+
+```{r bagging-4, output=FALSE}
+# Predictions
+liver.pred <- predict(bagging.liver, liver.test, type="class")
+bagging.pred.labs <- harden(as.numeric(liver.pred)-1)
+tab2 <- table(liver.test.labs$diagnosis, bagging.pred.labs)
+tab2
+
+```
+
+```{r forest-1, output=FALSE}
+# ----- RANDOM FOREST ------ #
+# Tune mtry and ntree parameters
+set.seed(1)
+forest.tune <- tune.randomForest(as.factor(diagnosis) ~ ., 
+                                 data = liver.train, 
+                                 mtry = 1:10, 
+                                 ntree=1:100,
+                                 tunecontrol = tune.control(sampling = "cross",cross=5),
+                                 type="class")
+summary(forest.tune)
+plot(forest.tune)
+```
+
+```{r forest-2, output=FALSE}
+# Apply the random forest based on the optimal mtry and ntree values
+forest.liver <- randomForest(as.factor(diagnosis) ~ ., data = liver, 
+                             subset = train.ind, mtry=2, ntree=69,
+                             importance=TRUE, type="class")
+forest.liver
+```
+
+```{r forest-3, output=FALSE}
+varImpPlot(forest.liver, main="")
+```
+
+```{r forest-4, output=FALSE}
+# Predictions
+forest.pred <- predict(forest.liver, liver.test, type="class")
+tab3 <- table(liver.test.labs$diagnosis, forest.pred)
+tab3
+
+```
+
+```{r summary, output = FALSE}
+# ----- RESULT SUMMARY ------ #
+model <- c("Boosting", "Bagging", "Random Forest")
+crand <- c(classAgreement(tab1)$crand, 
+           classAgreement(tab2)$crand,
+           classAgreement(tab3)$crand)
+diag <- c(1-classAgreement(tab1)$diag, 
+          1-classAgreement(tab2)$diag,
+          1-classAgreement(tab3)$diag)
+summary <- data.frame("Method" = model,
+                      "Adjusted Rand Index" = round(crand,3),
+                      "Misclassification Error Rate" = round(diag,3),
+                      check.names = FALSE)
+kable(summary)
+```
+
+## Introduction
+
+In this paper, we perform boosting, bagging, and random forest to predict whether a patient has liver disease or not. The data in this study comes from the UCI Machine Learning Repository [@liverDataset]. It contains 583 rows of patient data and 11 variables measuring different aspects of the patient. The response variable is categorical variable that indicates whether the patient is diagnosed with liver disease or not. The remaining variables include age, gender, total Bilirubin, direct Bilirubin, total proteins, albumin, A/G ratio, SGPT, SGOT and Alkphos.
+
+## Methods
+
+We first began the study by applying transformations to the data. Precisely, this includes handling missing data values and changing categorical variables to one-hot encoding. We then investigated the pattern of the data in a pairs plot. @fig-pairs shows a subset of this plot.
+
+```{r fig-pairs, ref.label="viz-3", output=TRUE, message=FALSE, fig.cap="Pairs plot of variables", fig.height=3, fig.width=5}
+```
+
+Next, we split the data into two equal parts to form training and testing sets. Once these were established, we then applied three different ensemble methods to the data: boosting, bagging, and random forest.
+
+The first method was boosting, which involves fitting small trees and using the output of the current tree as the input of the next. This process can be represented as $\hat{f}(x) = \sum_{b=1}^B \lambda \hat{f^b}(x)$ where $B$ is the number of trees, $\lambda$ is the shrinkage parameter that controls the learning rate, and $d$ is the interaction depth used to fit each tree $\hat{f^b}$ [@lecture6]. For our boosting, we used a Bernoulli distribution because the response is binary, 3000 trees, and an interaction depth of 1.
+
+The second method was bagging, which involves the generation of multiple models using a learning method and combining them to form a final model. The learning method we applied was tree based. This process can be represented as $\hat{f}_{bag}(x) = \frac{1}{B} \sum_{b=1}^B \hat{f^b}(x)$ where $B$ is the number of trees and $\hat{f^b}$ is a tree [@lecture7]. For our bagging, we used all 10 predictor variables at each split.
+
+The last method was random forest, which involves using a subset of the predictor variables to build multiple trees [@lecture8]. For our random forest, we used 5-fold cross validation to tune the number of trees and variables randomly sampled at each split. Precisely, we checked 1 to 100 trees and obtained 69 as the optimal value. We also checked 1 to 10 variables and obtained 2 as the optimal value. 
+
+## Results
+
+@tbl-summary below summarizes the results of each ensemble method. The adjusted Rand index (ARI) is quite poor for each of the methods. Of the three methods, bagging and random forest performed the best with an ARI value of 0.131 while boosting had an ARI value of 0.086. We see a similar pattern for the misclassification error rate where it is lowest for the bagging and random forest and slightly higher for boosting.
+
+```{r}
+#| label: tbl-summary
+#| ref-label: summary
+#| tbl-cap: Ensemble learning methods performance comparison
+#| output: TRUE
+#| message: FALSE
+```
+
+Each of the methods also provided us with insight on the most important factors associated with liver disease. For the boosting method, A/G ratio and total proteins were the top two most influential factors as shown in @fig-impfac-boosting.
+
+```{r fig-impfac-boosting, ref.label="boost-1", output=TRUE, message=FALSE, fig.cap="Pairs plot of variables", fig.height=4, fig.width=5}
+```
+
+The bagging and random forest methods also produced similar results as illustrated in @fig-impfac-bagging and @fig-impfac-forest.
+
+```{r fig-impfac-bagging, ref.label="bagging-3", fig.cap="Important factors associated with liver disease for bagging", output=TRUE, message=FALSE, fig.height=3.5, fig.width=8}
+```
+```{r fig-impfac-forest, ref.label="forest-3", fig.cap="Important factors associated with liver disease for random forest", output=TRUE, message=FALSE, fig.height=3.5, fig.width=8}
+```
+
+
+## Conclusion
+
+Overall, our study shows that the bagging and random forest methods provide the strongest predictions for liver disease compared to boosting. However, the accuracy of the models are still quite low and could be improved. A few ways to do this include feature engineering, performing more extensive data cleansing prior to modelling, and incorporating subject-matter expertise when interpreting results.
+
+## References
+
+::: {#refs}
+:::
+
+\newpage
+
+## Appendix
+
+```{r report-code, ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
