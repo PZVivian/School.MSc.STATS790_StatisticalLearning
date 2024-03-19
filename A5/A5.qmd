@@ -18,7 +18,7 @@ geometry:
 linestretch: 1.5
 ---
 
-# Liver disease classification using support vector machine and model based clustering
+# Heart failure classification using support vector machine and model based clustering
 
 **STATS/CSE 790 Assignment 5**
 
@@ -36,14 +36,7 @@ library(vscc)
 library(kableExtra)
 
 # Load data
-liver_raw <- 
-  read_csv("/Users/Vivian/Documents/Workspaces/R_Workspace/stats790/A3/Indian Liver Patient Dataset (ILPD).csv",
-           col_names = FALSE)
-colnames(liver_raw) <- c("age", "gender", "totalBilirubin", "directBilirubin", 
-                         "totalProteins", "albumin","agRatio", "SGPT", "SGOT", 
-                         "alkphos", "diagnosis")
-
-heart <- 
+heart_raw <- 
   read_csv("/Users/Vivian/Documents/Workspaces/R_Workspace/stats790/A5/heart_failure_clinical_records_dataset.csv")
 
 ```
@@ -51,63 +44,52 @@ heart <-
 ```{r viz-1, output=FALSE}
 # ----- DATA TRANSFORMATION ----- #
 # Check for missing data
-sum(sapply(liver_raw, function(col){ifelse(is.na(col), 1, 0)}))
-sum(sapply(liver_raw, function(col){ifelse(sum(col == ""), 1, 0)}))
-
-# Data transformation
-liver <- liver_raw %>% 
-  mutate(diagnosis = ifelse(diagnosis == 1, 1, 0), # One hot encoding
-         gender = ifelse(gender == "Male", 0, 1), # One hot encoding
-         alkphos = ifelse(is.na(alkphos), mean(alkphos, na.rm=TRUE), alkphos) # Impute missing data
-         )
-
-# Check for missing data
-sum(sapply(liver, function(col){ifelse(is.na(col), 1, 0)}))
-sum(sapply(liver, function(col){ifelse(sum(col == ""), 1, 0)}))
+sum(sapply(heart_raw, function(col){ifelse(is.na(col), 1, 0)}))
+sum(sapply(heart_raw, function(col){ifelse(sum(col == ""), 1, 0)}))
 
 ```
 
 ```{r viz-2, output=FALSE}
 # Full pairs plot
-liverV <- within(liver, LiverDisease <- ifelse(diagnosis==1,"Yes", "No"))
-ggpairs(data=liverV[,-c(11)], aes(colour=LiverDisease, alpha=0.4))
+heartV <- within(heart_raw, death <- ifelse(DEATH_EVENT==1,"Yes", "No"))
+ggpairs(data=heartV[,-c(13)], aes(colour=death, alpha=0.4))
 
 ```
 
 ```{r viz-3, output=FALSE}
 # Smaller pairs plot
-liverV <- within(liver, LiverDisease <- ifelse(diagnosis==1,"Yes", "No"))
-ggpairs(data=liverV[,-c(11,1,2,3,6,7,10)], aes(colour=LiverDisease, alpha=0.4))
+heartV <- within(heart_raw, death <- ifelse(DEATH_EVENT==1,"Yes", "No"))
+ggpairs(data=heartV[, -c(13,6,7,8,9,10,11,12)], aes(colour=death, alpha=0.4))
 
 ```
 
 ```{r split-1, output=FALSE}
 # Split data into train and test
-set.seed(1)
-train.ind <- sample(1:nrow(liver), nrow(liver) / 2)
-liver.train <- liver[train.ind,]
-liver.test <- liver[-train.ind,]
-liver.test.labs <- liver[-train.ind, "diagnosis"]
+set.seed(790)
+heart <- heart_raw
+heart[, -13] <- scale(heart_raw[, -13])
+train.ind <- sample(1:nrow(heart), nrow(heart) / 2)
+heart.train <- heart[train.ind,]
+heart.test <- heart[-train.ind,]
+heart.test.labs <- heart[-train.ind, "DEATH_EVENT"]
 
 ```
 
 ```{r linear-1, output=FALSE}
-svmfit <- svm(diagnosis ~ ., data = liver.train, kernel = "linear", 
-    cost = 0.1, scale = FALSE)
-    
-#clearly a non-linear boundary    
-plot(svmfit, liver.train)
+svmfit <- svm(DEATH_EVENT ~ ., data = heart.train, kernel = "linear", 
+    cost = 1, scale = FALSE)
 
 summary(svmfit)
+
 ```
 
 ```{r linear-2, output=FALSE}
 # Cross-validation to choose the best cost
-set.seed(1)
-tune.out <- tune(svm, diagnosis ~ ., data = liver.train, 
+set.seed(790)
+tune.out <- tune(svm, DEATH_EVENT ~ ., data = heart.train, 
     kernel = "linear", 
     ranges = list(
-      cost = c(0.05, 0.08, 0.09, 0.1, 0.11, 0.13, 0.15, 0.5, 1, 10, 100)
+      cost = c(0.01, 0.1, 0.5, 1, 2, 3, 4, 5, 10, 20)
     )
   )
   
@@ -116,29 +98,27 @@ summary(tune.out)
 
 ```{r linear-3, output=FALSE}
 # Prediction
-pred <- predict(tune.out$best.model, newdata = liver.test)
+pred <- predict(tune.out$best.model, newdata = heart.test)
 
-tabSvmLinear <- table(pred, liver.test.labs$diagnosis)
+tabSvmLinear <- table(pred, heart.test.labs$DEATH_EVENT)
 
 ```
 
 ```{r radial-1, output=FALSE}
-svmfit <- svm(diagnosis ~ ., data = liver.train, kernel = "radial", gamma = 1, cost = 1)
-    
-#clearly a non-linear boundary    
-plot(svmfit, liver.train)
+svmfit <- svm(DEATH_EVENT ~ ., data = heart.train, kernel = "radial", gamma = 1, cost = 1)
 
 summary(svmfit)
+
 ```
 
 ```{r radial-2, output=FALSE}
 # Cross-validation to choose the best gamma and cost
-set.seed(1)
-tune.out <- tune(svm, diagnosis ~ ., data = liver.train, 
+set.seed(790)
+tune.out <- tune(svm, DEATH_EVENT ~ ., data = heart.train, 
     kernel = "radial", 
     ranges = list(
       cost = c(1, 5, 6, 7, 8, 9, 10, 15, 20, 30),
-      gamma = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+      gamma = c(1, 2, 3, 4, 5, 6, 8, 10, 15, 20)
     )
   )
   
@@ -147,12 +127,11 @@ summary(tune.out)
 
 ```{r radial-3, output=FALSE}
 # Prediction
-pred <- predict(tune.out$best.model, newdata = liver.test)
+pred <- predict(tune.out$best.model, newdata = heart.test)
 
-tabSvmRadial <- table(pred, liver.test.labs$diagnosis)
+tabSvmRadial <- table(pred, heart.test.labs$DEATH_EVENT)
 
 ```
-
 
 ```{r svm-summary, output = FALSE}
 # RESULTS
@@ -171,24 +150,23 @@ kable(summary)
 
 ```{r cluster-mclust-1, output = FALSE}
 # MCLUST
-x <- scale(liver[,-11])
+x <- scale(heart[,-13])
 modclust <- Mclust(x, 2)
 summary(modclust)
 
 ```
 
 ```{r cluster-mclust-2, output = FALSE}
-tabFull <- table(class=liver$diagnosis, 
+tabFull <- table(class=heart$DEATH_EVENT, 
                  predictions=factor(as.character(map(modclust$z)-1)))
 
 ```
 
-
 ```{r cluster-vscc-1, output = FALSE}
 # VSCC
-x <- scale(liver[,-11])
-modvscc <- vscc(x, forcereduction=TRUE)
-tabReduced <- table(class=liver$diagnosis,
+x <- scale(heart[,-13])
+modvscc <- vscc(x)
+tabReduced <- table(class=heart$DEATH_EVENT,
                     predictions=modvscc$bestmodel$classification)
 
 ```
@@ -208,21 +186,20 @@ crand <- c(classAgreement(tabFull)$crand,
 misclass <- c(1-classAgreement(tabFull)$diag, 
               1-classAgreement(tabReduced)$diag)
 summary <- data.frame("Method" = method,
-                      "Adjusted Rand Index" = round(crand,3),
-                      "Misclassification Error Rate" = round(misclass,3),
+                      "Adjusted Rand Index" = round(crand,5),
+                      "Misclassification Error Rate" = round(misclass,5),
                       check.names = FALSE)
 kable(summary)
 
 ```
 
-
 ## Introduction
 
-In this study, we use Support Vector Machines (SVMs) and model based clustering to predict whether a patient has liver disease or not. The data in this study comes from the UCI Machine Learning Repository [@liverDataset]. It contains 583 rows of patient data and 11 variables of measurements. The response variable is a binary categorical variable that indicates whether the patient is diagnosed with liver disease or not. The potential predictor variables include age, gender, total Bilirubin, direct Bilirubin, total proteins, albumin, A/G ratio, SGPT, SGOT and Alkphos.
+In this study, we use Support Vector Machines (SVMs) and model based clustering to predict mortality attributed to heart failure. The data in this study comes from an open sourced website called Kaggle [@heartDataset]. It contains 299 rows of patient data and 13 variables of measurements. The response variable is a binary categorical variable indicating the event of death. The remaining variables include age, anaemia, creatinine phosphokinase, diabetes, ejection fraction, high blood pressure, platelets, serum creatinine, serum sodium, sex, smoking, and time.
 
 ## Methods
 
-We start the study by checking the shape of the data and handling any missing values through imputation. We then visualized the data in a pairs plot to check for any patterns in the data. @fig-pairs shows a subset of this plot, where blue indicates the presence of liver disease and red indicates the absence of it. We can see that the observations have a non-linear boundary between them, which makes the data suitable for SVM or model based clustering. 
+We start the study by checking the shape of the data and ensuring there are no missing values. We then visualized the data in a pairs plot to check for any patterns in the data. @fig-pairs shows a subset of this plot, where blue indicates a positive mortality case and red indicates a negative one. We can see that the observations have a non-linear boundary between them, which makes the data suitable for SVM or model based clustering.
 
 As such, we then split the data into two equal parts to form training and testing sets and applied these two different techniques to the data: SVM and model based clustering.
 
@@ -231,15 +208,11 @@ As such, we then split the data into two equal parts to form training and testin
 
 The first technique was SVM, a supervised learning method that uses non-linear decision boundaries to classify data. The boundaries are defined using a kernel function which is used to enlarge the feature space and measure the similarity between observations. For our study, we used linear and radial kernels to model the data. The linear kernel is defined as $K(x_i, x_i\prime) = \sum_{j=1}^{p}x_{ij},x_i\prime_{j}$ and the radial kernel is defined as $K(x_i, x_i\prime) = exp(-\gamma\sum_{j=1}^{p}(x_{ij}-x_i\prime_{j})^2)$ where $\gamma$ is a positive constant and $i$ represents the $i$th observation [@lecture14].
 
-We used cross validation to tune the cost parameter C and gamma constant $\gamma$. The cost parameter measures the number of observations that can be on the wrong side of the hyperplane and the tolerance towards margin violations. In other words, it puts a limitation on the sum of slack variables $\epsilon_i$ where $\epsilon_i$ indicates whether the $i$th observation is on the correct side of the margin ($\epsilon_i = 0$) or violates the margin ($\epsilon_i > 0$). Thus, C controls the bias and variance in the model which we seek to optimize [@lecture13]. For the linear kernel, we tried 11 different values of the cost parameter and found 0.1 to be the optimal value. For the radial kernel, we tried 10 different values of the cost parameter and found 6 to be the optimal value. Likewise, we tried 10 different values of gamma and found 5 to be the optimal value.
+We used cross validation to tune the cost parameter C and gamma constant $\gamma$. The cost parameter measures the number of observations that can be on the wrong side of the hyperplane and the tolerance towards margin violations. In other words, it puts a limitation on the sum of slack variables $\epsilon_i$ where $\epsilon_i$ indicates whether the $i$th observation is on the correct side of the margin ($\epsilon_i = 0$) or violates the margin ($\epsilon_i > 0$). Thus, C controls the bias and variance in the model which we seek to optimize [@lecture13]. For the linear kernel, we tried 10 different values of the cost parameter and found 0.1 to be the optimal value. For the radial kernel, we tried 10 different values of the cost parameter and found 5 to be the optimal value. Likewise, we tried 10 different values of gamma and found 3 to be the optimal value.
 
 After cross-validation, the models were then fit using the test set and results were recorded.
 
-The second technique we applied to the data is model based clustering. We modelled the data using all the predictor variables then a subset of them.
-
-The second method was FA, which involves replacing $p$ observed variables by $q$ \< $p$ latent factors. The model can be written as $X_i = \mu + \Lambda U_i + \epsilon$ for $i = 1,...,n$ factors [@lecture11]. For each FA, a hypothesis test is performed where the null hypothesis states that the number of factors in the model is sufficient. We performed FA using 1 to 9 factors and selected the optimal factor size as 9 because it failed to reject the null hypothesis (i.e. had a p-value larger than a significance level of $\alpha = 0.05$) while the other factor sizes rejected the null hypothesis.
-
-After applying PCA and FA to the data, we then performed a clustering analysis. First, we performed clustering on the full data set. Then we applied clustering using only the PCs from our PCA.
+The second technique we applied to the data was model based clustering. The first model contained all 13 predictor variables. The second model contained only 2 predictor variables.
 
 ## Results
 
@@ -265,7 +238,7 @@ After applying PCA and FA to the data, we then performed a clustering analysis. 
 
 ## Conclusion
 
-Overall, our study shows that applying SVM to liver disease
+Overall, our study shows that applying SVM to heart disease
 
 Overall, our study shows that applying PCA prior to clustering for diabetes classification is not very effective. A few ways to improve the accuracy of these models include feature engineering, performing more extensive data cleansing prior to modelling, and incorporating subject-matter expertise when interpreting results.
 
