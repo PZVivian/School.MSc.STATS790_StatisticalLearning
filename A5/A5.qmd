@@ -11,7 +11,7 @@ header-includes:
 bibliography: A5.bib
 csl: https://www.zotero.org/styles/apa-single-spaced
 nocite: |
-  | @lecture13, @lecture14
+  | @lecture13, @lecture14, @lecture15
 fontsize: 11pt
 geometry: 
   - margin = 1in
@@ -168,12 +168,12 @@ x <- scale(heart[,-13])
 modvscc <- vscc(x)
 tabReduced <- table(class=heart$DEATH_EVENT,
                     predictions=modvscc$bestmodel$classification)
+modvscc
+head(modvscc$topselected)
 
 ```
 
 ```{r cluster-vscc-2, output = FALSE}
-# Show selected variables
-head(modvscc$topselected)
 plot(modvscc)
 
 ```
@@ -199,24 +199,43 @@ In this study, we use Support Vector Machines (SVMs) and model based clustering 
 
 ## Methods
 
-We start the study by checking the shape of the data and ensuring there are no missing values. We then visualized the data in a pairs plot to check for any patterns in the data. @fig-pairs shows a subset of this plot, where blue indicates a positive mortality case and red indicates a negative one. We can see that the observations have a non-linear boundary between them, which makes the data suitable for SVM or model based clustering.
+We start the study by checking the shape of the data and ensuring there are no missing values. We performed data visualization using a pairs plot to check for any patterns in the data. @fig-pairs shows a subset of this plot, where blue indicates a mortality case and red indicates the absence of one. From this plot, we can see that the observations have a non-linear boundary between them for many of the variable combinations, making the data suitable for SVM or model based clustering.
 
-As such, we then split the data into two equal parts to form training and testing sets and applied these two different techniques to the data: SVM and model based clustering.
+As such, we then split the data into two equal parts to form training and testing sets and applied these two different techniques to the data.
 
-```{r fig-pairs, ref.label="viz-3", output=TRUE, message=FALSE, fig.cap="Pairs plot of a selection of the variables", fig.height=3, fig.width=5}
+```{r fig-pairs, ref.label="viz-3", output=TRUE, message=FALSE, fig.cap="Pairs plot of a selection of the variables", fig.height=5, fig.width=8}
 ```
 
-The first technique was SVM, a supervised learning method that uses non-linear decision boundaries to classify data. The boundaries are defined using a kernel function which is used to enlarge the feature space and measure the similarity between observations. For our study, we used linear and radial kernels to model the data. The linear kernel is defined as $K(x_i, x_i\prime) = \sum_{j=1}^{p}x_{ij},x_i\prime_{j}$ and the radial kernel is defined as $K(x_i, x_i\prime) = exp(-\gamma\sum_{j=1}^{p}(x_{ij}-x_i\prime_{j})^2)$ where $\gamma$ is a positive constant and $i$ represents the $i$th observation [@lecture14].
+The first technique we applied was SVM, which is a supervised learning method that performs classification using decision boundaries as defined by a kernel. A kernel is a function that is used to measure the similarity between observations and can be used to enlarge the feature space to accommodate non-linear boundaries between classes [@lecture14]. 
 
-We used cross validation to tune the cost parameter C and gamma constant $\gamma$. The cost parameter measures the number of observations that can be on the wrong side of the hyperplane and the tolerance towards margin violations. In other words, it puts a limitation on the sum of slack variables $\epsilon_i$ where $\epsilon_i$ indicates whether the $i$th observation is on the correct side of the margin ($\epsilon_i = 0$) or violates the margin ($\epsilon_i > 0$). Thus, C controls the bias and variance in the model which we seek to optimize [@lecture13]. For the linear kernel, we tried 10 different values of the cost parameter and found 0.1 to be the optimal value. For the radial kernel, we tried 10 different values of the cost parameter and found 5 to be the optimal value. Likewise, we tried 10 different values of gamma and found 3 to be the optimal value.
+For our study, we used linear and radial kernels [@lecture14]. The linear kernel can be written as: 
 
-After cross-validation, the models were then fit using the test set and results were recorded.
+$$
+K(x_i, x_i\prime) = \sum_{j=1}^{p}x_{ij},x_i\prime_{j}
+$$ 
+where $i$ represents the $i$th observation. The radial kernel can be written as: 
 
-The second technique we applied to the data was model based clustering. The first model contained all 13 predictor variables. The second model contained only 2 predictor variables.
+$$
+K(x_i, x_i\prime) = exp(-\gamma\sum_{j=1}^{p}(x_{ij}-x_i\prime_{j})^2)
+$$
+
+where $i$ represents the $i$th observation and $\gamma$ is a positive constant [@lecture14].
+
+We used cross-validation to tune the cost parameter C and the gamma constant $\gamma$. The cost parameter measures the number of observations that can be on the wrong side of the hyperplane and the tolerance towards margin violations. In other words, it puts a limitation on the sum of slack variables $\epsilon_i$, where $\epsilon_i$ indicates whether the $i$th observation is on the correct side of the margin ($\epsilon_i = 0$), violates the margin ($\epsilon_i > 0$), or is on the wrong side of the hyperplane ($\epsilon_i > 1$). Thus, C controls the bias and variance in the model. When C is large, we have wide margins and the model will tolerate many margin violations. When C is small, we have small margins and the model will have less margin violations. We seek to optimize this bias-variance trade off through cross-validation [@lecture13].
+
+For the purposes of this study, we tried using 10 different values for each parameter. For the linear model, we found a cost parameter of $C = 1$ to be the optimal value. For the radial kernel, we found a cost parameter of $C = 5$ and a gamma value of $\gamma = 3$ to produce optimal results. After cross-validation was performed, the models were then fit using the test set and results were recorded.
+
+The second technique we applied to the data was model based clustering using all the predictor variables and then a subset of them. The first model contained all 13 predictor variables. It had a ellipsoidal, equal volume and shape (EEV) structure. The second model contained only 2 predictor variables, sex and smoking status, as shown in @fig-cluster-vscc-2. This was selected using Variable Selection for Clustering and Classification (VSCC), which selects predictor variables that maximize the between-group variance and minimize the within-group variance [@lecture15]. The best reduced model had a diagonal, equal volume and shape (EEI) structure.
+
+```{r fig-cluster-vscc-2, ref.label="cluster-vscc-2", output=TRUE, message=FALSE, fig.cap="Sex and smoking were the variables selected", fig.height=4, fig.width=4}
+```
+
+
 
 ## Results
 
-@tbl-svm-summary below summarizes the SVM results using linear and radial kernels. The adjusted Rand index (ARI) is very poor for both kernels despite cross-validation. The ARI is slightly higher for the radial kernel compared to the linear kernel indicating that a radial kernel may be a better fit. We see a similar pattern for the misclassification error rate where the performance is better for the radial kernel compared to the linear kernel.
+@tbl-svm-summary below summarizes the SVM results using linear and radial kernels. 
+The adjusted Rand index (ARI) is very poor for both kernels. For the linear kernel, the ARI is 0 indicating that the classification may not be very accurate as the results could be due to random chance. For the radial kernel, the ARI is negative indicating that the classification may not be very accurate as well. Similarly, the misclassfication error rate also shows a very poor performance for both kernels. 
 
 ```{r}
 #| label: tbl-svm-summary
@@ -226,7 +245,7 @@ The second technique we applied to the data was model based clustering. The firs
 #| message: FALSE
 ```
 
-@tbl-cluster-summary below summarizes the model based clustering results using a full and reduced model. The adjusted Rand index (ARI) is very poor for both kernels despite cross-validation. The ARI is slightly higher for the radial kernel compared to the linear kernel indicating that a radial kernel may be a better fit. We see a similar pattern for the misclassification error rate where the performance is better for the radial kernel compared to the linear kernel.
+@tbl-cluster-summary below summarizes the model based clustering results using the full and reduced model. The adjusted Rand index (ARI) is quite low for both kernels. For the full model, the ARI is 0.00206 indicating that the classification may not be very accurate as the results could be due to random chance. For the reduced model, the ARI is negative indicating that the classification may not be very accurate as well. The misclassification error rate, on the other hand, has shown substantial improvement compared to the SVM models. The rate is similar for both the full and reduced model, with the rate being slightly better for the full model compared to the reduced one.
 
 ```{r}
 #| label: tbl-cluster-summary
@@ -238,9 +257,7 @@ The second technique we applied to the data was model based clustering. The firs
 
 ## Conclusion
 
-Overall, our study shows that applying SVM to heart disease
-
-Overall, our study shows that applying PCA prior to clustering for diabetes classification is not very effective. A few ways to improve the accuracy of these models include feature engineering, performing more extensive data cleansing prior to modelling, and incorporating subject-matter expertise when interpreting results.
+Overall, the results of our SVM and model based clustering analysis was not very effective to predict mortality attributed to heart disease. Of our results, the full model is likely the strongest model for prediction among the four models. Future studies may want to consider other kernels, such as a polynomial kernel, to achieve better results when applying SVM. Otherwise, performing feature engineering, cleaning the data more extensively prior to modelling, and incorporating subject-matter expertise during interpretation my be beneficial to improve the models.
 
 ## References
 
