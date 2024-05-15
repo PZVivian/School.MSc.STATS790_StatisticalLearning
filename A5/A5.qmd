@@ -29,10 +29,6 @@ linestretch: 1.5
 ```{r setup, output=FALSE}
 # ----- PACKAGE & DATA SETUP ----- #
 library(tidyverse)
-library(GGally)
-library(e1071)
-library(mclust)
-library(vscc)
 library(kableExtra)
 
 # Load data

@@ -1,0 +1,398 @@
+---
+format: pdf
+editor: visual
+execute:
+  echo: false
+  warning: false
+  error: false
+header-includes:
+  - \usepackage{float}
+  - \floatplacement{figure}{H}
+bibliography: Project.bib
+csl: https://www.zotero.org/styles/apa-single-spaced
+fontsize: 12pt
+geometry: 
+  - margin = 1in
+linestretch: 1.5
+---
+
+# Customer Personality Analysis using SVM and Random Forest
+
+**STATS/CSE 790 Project**
+
+**2024-04-04**
+
+**Pao Zhu Vivian Hsu (400547994)**
+
+```{r setup, output=FALSE}
+# ----- PACKAGE & DATA SETUP ----- #
+library(tidyverse)
+library(GGally)
+library(corrplot)
+library(e1071)
+library(randomForest)
+library(kableExtra)
+
+# Load data
+marketing_0 <- read_tsv("marketing_campaign.csv")
+
+```
+
+```{r viz-1, output=FALSE}
+# ----- DATA TRANSFORMATION ----- #
+# Check for missing data
+sum(sapply(marketing_0, function(col){ifelse(is.na(col), 1, 0)}))
+sum(sapply(marketing_0, function(col){ifelse(sum(col == ""), 1, 0)}))
+
+# Helper table with values to use for imputation
+education_vals <- marketing_0 %>%
+  group_by(Education) %>% 
+  summarize(Imputed_Income = mean(Income, na.rm = TRUE)) %>% 
+  arrange(Imputed_Income) %>% 
+  mutate(Education_Num = c(1,2,3,4,5))
+
+# Impute missing values in the income column
+# Convert education to numerical variable
+marketing_1 <- marketing_0 %>% 
+  left_join(education_vals, by = join_by(Education == Education)) %>% 
+  mutate(Income = ifelse(is.na(Income), Imputed_Income, Income)) %>% 
+  select(-c(`ID`, `Education`, `Imputed_Income`)) %>% 
+  mutate(Education = `Education_Num`) %>% 
+  select(-`Education_Num`)
+
+# Check missing values again
+sum(sapply(marketing_1, function(col){ifelse(is.na(col), 1, 0)}))
+
+# Check marital status values
+marketing_2 <- marketing_1 %>% 
+  group_by(Marital_Status) %>% 
+  summarise(count = n())
+marketing_2
+
+# Check for constant columns (i.e. with only one value)
+which(apply(marketing_1, 2, var)==0)
+
+# Handle non-interpretable values
+marketing <- marketing_1 %>%
+  mutate(
+    Dt_Customer = as.numeric(as.Date(
+      paste0(substr(Dt_Customer, 7, 10), 
+             substr(Dt_Customer, 3, 6), 
+             substr(Dt_Customer, 1, 2))
+      )),
+    Kidhome = as.integer(Kidhome),
+    Teenhome = as.integer(Teenhome),
+    Complain = as.integer(Complain),
+    AcceptedCmp1 = as.integer(AcceptedCmp1),
+    AcceptedCmp2 = as.integer(AcceptedCmp2),
+    AcceptedCmp3 = as.integer(AcceptedCmp3),
+    AcceptedCmp4 = as.integer(AcceptedCmp4),
+    AcceptedCmp5 = as.integer(AcceptedCmp5),
+    Complain = as.integer(Complain),
+    Response = as.integer(Response),
+    Marital_Status = ifelse(Marital_Status == "Alone", 
+                            "Single", Marital_Status)) %>% 
+  filter(! Marital_Status %in% c("Absurd", "YOLO")) %>% 
+  mutate(Single = as.integer(ifelse(Marital_Status == "Single", 1, 0)),
+         Married = as.integer(ifelse(Marital_Status == "Married", 1, 0)),
+         Together = as.integer(ifelse(Marital_Status == "Together", 1, 0)),
+         Divorced = as.integer(ifelse(Marital_Status == "Divorced", 1, 0)),
+         Widow = as.integer(ifelse(Marital_Status == "Widow", 1, 0))) %>% 
+  select(-c(Marital_Status, Z_CostContact, Z_Revenue))
+
+```
+
+```{r viz-2, output=FALSE}
+# Pairs plot of selection of variables
+marketingV <- within(marketing, Outcome <- ifelse(Response==1,"Yes", "No"))
+ggpairs(data=marketingV[,c(2,3,5,25,31)], aes(colour=Outcome, alpha=0.4))
+
+```
+
+```{r viz-3, output=FALSE}
+# Correlation plot
+corr_matrix <- cor(marketing)
+corrplot(round(corr_matrix,2), method = "number", number.cex=0.75)
+
+```
+
+```{r split-1, output=FALSE}
+# Split data into train and test
+set.seed(790)
+marketing_3 <- marketing
+marketing_3[, -24] <- scale(marketing[, -24])
+train.ind <- sample(1:nrow(marketing_3), nrow(marketing_3) / 2)
+marketing.train <- marketing_3[train.ind,]
+marketing.test <- marketing_3[-train.ind,]
+marketing.test.labs <- marketing_3[-train.ind, "Response"]
+
+```
+
+```{r harden}
+# Function to harden predictions
+harden <- function(probs){
+  n <- length(marketing.test$Response)
+  pred.labs <- rep(0,n)
+  for(i in 1:n){
+  	pred.labs[i] <- ifelse(probs[i] < 0.5, 0, 1)
+  }
+  return(pred.labs)
+}
+
+```
+
+```{r linear-1, output=FALSE}
+# ----- SVM: LINEAR KERNEL ------ #
+# Cross-validation to choose the best cost
+set.seed(790)
+tune.out <- tune(svm, Response ~ ., data = marketing.train, 
+    kernel = "linear",
+    ranges = list(
+      cost = c(0.0005, 0.001, 0.005, 0.01, 0.015, 0.02, 0.1, 0.5, 1, 5)
+    )
+  )
+  
+summary(tune.out)
+
+cost <- c(tune.out$best.parameters)$cost
+```
+
+```{r linear-2, output=FALSE}
+# Prediction
+set.seed(790)
+pred <- predict(tune.out$best.model, newdata = marketing.test)
+
+tabSvmLinear <- table(harden(pred), marketing.test.labs$Response)
+
+```
+
+```{r poly-1, output=FALSE}
+# ----- SVM: POLYNOMIAL KERNEL ------ #
+# Cross-validation to choose the best cost
+set.seed(790)
+tune.out <- tune(svm, Response ~ ., data = marketing.train, 
+    kernel = "polynomial",
+    ranges = list(
+      cost = c(0.01, 0.1, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1, 5)
+    )
+  )
+  
+summary(tune.out)
+
+cost <- c(cost, c(tune.out$best.parameters)$cost)
+```
+
+```{r poly-2, output=FALSE}
+# Prediction
+set.seed(790)
+pred <- predict(tune.out$best.model, newdata = marketing.test)
+
+tabSvmPoly <- table(harden(pred), marketing.test.labs$Response)
+
+```
+
+```{r radial-1, output=FALSE}
+# ----- SVM: RADIAL KERNEL ------ #
+# Cross-validation to choose the best gamma and cost
+set.seed(790)
+tune.out <- tune(svm, Response ~ ., data = marketing.train, 
+    kernel = "radial",
+    ranges = list(
+      cost = c(0.1, 1, 1.5, 2, 2.3, 2.5, 2.8, 3),
+      gamma = c(0.01, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.1, 1)
+    )
+  )
+  
+summary(tune.out)
+
+cost <- c(cost, c(tune.out$best.parameters)$cost)
+gamma <- c("N/A", "N/A", c(tune.out$best.parameters)$gamma)
+```
+
+```{r radial-2, output=FALSE}
+# Prediction
+set.seed(790)
+pred <- predict(tune.out$best.model, newdata = marketing.test)
+
+tabSvmRadial <- table(harden(pred), marketing.test.labs$Response)
+
+```
+
+```{r tune-summary, output=FALSE}
+tuneSummary <- data.frame("Kernel" = c("Linear", "Polynomial", "Radial"), 
+                      "Optimal Cost" = cost,
+                      "Optimal Gamma" = gamma,
+                      check.names = FALSE)
+kable(tuneSummary)
+
+```
+
+```{r forest-1, output=FALSE}
+# ----- RANDOM FOREST ------ #
+# Tune mtry and ntree parameters
+set.seed(790)
+forest.tune <- tune.randomForest(as.factor(Response) ~ ., 
+                                 data = marketing.train, 
+                                 mtry = 1:10, 
+                                 ntree = 1:80,
+                                 tunecontrol = 
+                                   tune.control(sampling = "cross",
+                                                cross=5),
+                                 type = "class")
+summary(forest.tune)
+plot(forest.tune)
+```
+
+```{r forest-2, output=FALSE}
+# Apply the random forest based on the optimal mtry and ntree values
+set.seed(790)
+forest.marketing <- randomForest(as.factor(Response) ~ ., data = marketing.train,
+                             mtry=10, ntree=43, importance=TRUE, type="class")
+forest.marketing
+```
+
+```{r forest-3, output=FALSE}
+varImpPlot(forest.marketing, main="")
+```
+
+```{r forest-4, output=FALSE}
+# Predictions
+set.seed(790)
+forest.pred <- predict(forest.marketing, marketing.test, type="class")
+tabForest <- table(forest.pred, marketing.test.labs$Response)
+tabForest
+
+```
+
+```{r mod-summary, output = FALSE}
+# ----- RESULTS ----- #
+method <- c("SVM Linear Kernel", "SVM Polynomial Kernel", 
+            "SVM Radial Kernel", "Random Forest")
+crand <- c(classAgreement(tabSvmLinear)$crand,
+           classAgreement(tabSvmPoly)$crand,
+           classAgreement(tabSvmRadial)$crand,
+           classAgreement(tabForest)$crand)
+misclass <- c(1-classAgreement(tabSvmLinear)$diag, 
+              1-classAgreement(tabSvmPoly)$diag, 
+              1-classAgreement(tabSvmRadial)$diag,
+              1-classAgreement(tabForest)$diag)
+summary <- data.frame("Method" = method, 
+                      "Adjusted Rand Index" = round(crand,5),
+                      "Misclassification Error Rate" = round(misclass,5),
+                      check.names = FALSE)
+kable(summary)
+
+```
+
+## Introduction
+
+Understanding the characteristics of customers and adjusting one's products and services to cater to these characteristics is crucial to running a successful business. As such, building models to accurately analyze customer personality can serve as a powerful tool for businesses. In this paper, we use Support Vector Machines (SVMs) and random forest methods to predict customer responses to a marketing campaign by analyzing customer personality. 
+
+The data in this study comes from an open sourced website called Kaggle [@marketingDataset]. It contains 2240 observations and 29 variables describing the customer, their buying habits, and their interactions with previous campaigns. The response variable is a binary categorical variable indicating whether the customer accepted the offer in the latest marketing campaign or not. The remaining variables are listed below in @tbl-desc:
+
+```{r desc, output = FALSE, echo = FALSE}
+# VARIABLE DESCRIPTION
+category <- c("People", "", "", "", "Products", "Promotion", "", "Place", "")
+variables <- c("ID, birth year, education level, marital status, income, number of children",
+               "in household, number of teenagers in household, enrolment date with company,",
+               "number of days since last purchase, whether the customer complained over the", 
+               "last two years",
+               "Amount spent on wine, fruits, meat, fish, sweets, gold over the last 2 years",
+               "Number of purchases made with discount, whether the customer",
+               "accepted the offer for the past 5 campaigns",
+               "Number of website visits in the last month, number of purchases",
+               "made on the website, catalog, and in-store")
+desc <- data.frame("Category" = category, 
+                   "Variables" = variables,
+                   check.names = FALSE)
+kable(desc)
+
+```
+
+```{r}
+#| label: tbl-desc
+#| ref-label: desc
+#| tbl-cap: Variable description
+#| output: TRUE
+#| message: FALSE
+```
+
+## Methods
+
+We began the study by cleansing the data to handle any missing and non-interpretable values. Missing values in the income column were imputed using the mean for the associated education level. Rows containing non-interpretable marital statuses were removed.
+
+After cleansing the data, we then performed data visualization using a pairs plot and correlation plot to check for any patterns in the data. @fig-pairs shows a subset of the pairs plot, where blue indicates the case where a customer accepts the campaign offer and red indicates the customer does not accept it. There is an imbalance in the outcome. However, we have chosen not to alter this imbalance since this imbalance is often found in real business settings.
+
+```{r fig-pairs, ref.label="viz-2", output=TRUE, message=FALSE, fig.cap="Pairs plot of a selection of the variables", fig.height=5, fig.width=8}
+```
+
+@fig-corr shows the correlation plot. We define a strong correlation as those with a correlation coefficient larger than 0.7. Based on the plot, all values are 0.7 or lower so there is no evidence of strong correlations.
+
+```{r fig-corr, ref.label="viz-3", output=TRUE, message=FALSE, fig.cap="Correlation plot", fig.height=9, fig.width=9}
+```
+
+Next, we split the data into two equal parts to form training and testing sets and applied SVM and random forest methods to the data.
+
+The first method we applied was SVM, which is a supervised learning method that uses decision boundaries to perform classification. These decision boundaries are determined by a kernel, which is a function that measures the similarity between observations and can be used to increase the feature space to accommodate non-linear boundaries between classes [@lecture14].
+
+In this study, we used linear, polynomial, and radial kernels to perform SVM. The linear kernel can be written as:
+
+$$
+K(x_i, x_i\prime) = \sum_{j=1}^{p}x_{ij},x_i\prime_{j}
+$$ where $i$ represents the $i$th observation. The polynomial kernel can be written as:
+
+$$
+K(x_i, x_i\prime) = (1 + \sum_{j=1}^{p}x_{ij},x_i\prime_{j})^d
+$$ where $i$ represents the $i$th observation and $d$ represents the degree of the polynomial. The radial kernel can be written as:
+
+$$
+K(x_i, x_i\prime) = exp(-\gamma\sum_{j=1}^{p}(x_{ij}-x_i\prime_{j})^2)
+$$
+
+where $i$ represents the $i$th observation and $\gamma$ is a positive constant [@lecture14].
+
+Each of the models were also tuned for the cost parameter C and the gamma constant $\gamma$ through cross-validation. The cost parameter controls the model's tolerance level towards margin violations. It measures the number of observations that are on the wrong side of the hyperplane by putting a limitation on the sum of slack variables $\epsilon_i$ permitted by the model. $\epsilon_i$ indicates whether the $i$th observation is on the wrong side of the hyperplane ($\epsilon_i > 1$), violates the margin ($\epsilon_i > 0$), or is on the correct side of the margin ($\epsilon_i = 0$). The cost parameter C can also be interpreted as a parameter that controls the bias and variance in the model. When it is large, there are wide margins and the model has a high tolerance for margin violations. When it is small, there are narrow margins and the model has lower tolerance towards margin violations. Cross-validation aims to balance the bias-variance trade off involved [@lecture13].
+
+In this study, we tested a variety of values for each parameter to tune them. @tbl-tune-summary provides a summary of the optimal values for each model. For the linear model, the optimal value for the cost parameter was found to be $C = 0.01$. For the polynomial model, the optimal value obtained for the cost parameter was $C = 0.4$. Finally, for the radial kernel, we the optimal parameters were $C = 2.5$ for the cost parameter and $\gamma = 0.03$ for the gamma parameter. After performing cross-validation, we used the optimal values to fit the models with the test set.
+
+```{r}
+#| label: tbl-tune-summary
+#| ref-label: tune-summary
+#| tbl-cap: Optimal values from cross-validation
+#| output: TRUE
+#| message: FALSE
+```
+
+The second method we used was random forest, an ensemble learning technique that involves splitting the predictor variables into subsets to form multiple trees. The final model from a random forest would average out the results from each of the individual trees produced and develop a more reproducible and reliable result [@lecture8]. In this study, we performed 5-fold cross validation to tune the number of trees and variables randomly sampled at each split. We tested tree sizes of 1 to 80 and obtained 43 as the optimal tree size. We also tested variable subset sizes of 1 to 10 and obtained 10 as the optimal size.
+
+## Results
+
+@tbl-mod-summary below summarizes the results of the SVM and random forest. The adjusted Rand index (ARI) is somewhat low for all four models. The SVM model with the radial kernel produced the highest ARI followed by the random forest, polynomial kernel, and linear kernel models.
+
+The misclassification error rate follows a somewhat similar pattern. As with the ARI, the SVM model with the radial kernel produced the best results among the four models. The error rate for the random forest is slightly worse than the polynomial kernel model. Once again, the linear kernel model has the poorest performance.
+
+```{r}
+#| label: tbl-mod-summary
+#| ref-label: mod-summary
+#| tbl-cap: Performance comparison
+#| output: TRUE
+#| message: FALSE
+```
+
+Based on these measures, the radial kernel SVM model has the best performance among the four models produced in this study. However, the random forest model is also valuable as it provides insight on the most important factors associated with a customer accepting an offer from a marketing campaign. As shown in @fig-important, the most important factors are the number of days since the last purchase, amount spent on meat products in the last two years, date the customer enrolled with the company, and the amount spent on wine in the last two years.
+
+```{r fig-important, ref.label="forest-3", fig.cap="Important factors associated with accepting an offer from a marketing campaign", output=TRUE, message=FALSE, fig.height=8, fig.width=8}
+```
+
+
+## Conclusion
+
+Overall, the results of our study show four different ways to model the relationship between customer personality and their response to marketing campaigns. Based on the ARIs and misclassification error rates, all of the models have a decent performance. Since the radial kernel model performed the best, we would recommend using this model to help businesses better understand their customers and make changes to their products to increase campaign results.
+
+To improve the accuracy and interpretability of these models, future studies may want to consult subject matter experts to better understand the ARI rates for this type of data. In addition, cleaning the data more extensively, carrying out feature engineering, and performing more fine-tuning may help improve model performance.
+
+
+## References
+
+::: {#refs}
+:::
